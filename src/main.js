@@ -5,6 +5,7 @@ import { Player, HERO_MODEL, HERO_ANIMS } from './game/player.js';
 import { BossAI, BOSS_MODEL, BOSS_ANIMS } from './game/boss/BossAI.js';
 import { HUD }    from './ui/HUD.js';
 import { CharacterAnimator, loadGLTF } from './game/AnimationManager.js';
+import { soundManager } from './game/SoundManager.js';
 
 // ─── Renderer ────────────────────────────────────────────────────────────────
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -248,6 +249,9 @@ function startGame() {
   overlay.style.opacity = '0';
   setTimeout(() => overlay.remove(), 600);
 
+  // ── Arena start fanfare
+  soundManager.playStart();
+
   player.requestPointerLock();
 
   boss = new BossAI(scene, [player], combatWorld);
@@ -267,6 +271,7 @@ function startGame() {
   boss.onDeath   = () => {
     killTimeMs = hud.stopTimer() * 1000;
     gameOver   = true;
+    soundManager.playMutantScream();
     // Hero plays cinematic victory pose
     setTimeout(() => player.playVictory?.(), 600);
     setTimeout(() => showGameOver(true), 2500);
@@ -288,6 +293,7 @@ function startGame() {
     if (hit.target !== boss) return;
     boss.applyHit(hit);
     hud.showHit(hit.damage);
+    soundManager.playImpact(); // weapon-connects impact clang
   };
 
   player.onDeath = () => {

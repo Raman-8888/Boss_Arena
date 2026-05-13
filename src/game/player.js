@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CharacterAnimator, loadGLTF } from './AnimationManager.js';
+import { soundManager } from './SoundManager.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 const MAX_HP         = 100;
@@ -146,6 +147,7 @@ export class Player {
     // ── Scene group
     this.group = new THREE.Group();
     this.group.position.set(0, 0, 6);
+    this.group.rotation.y = Math.PI; // face -Z toward boss spawn (z=-10)
     this.scene.add(this.group);
 
     // ── Callbacks
@@ -651,6 +653,9 @@ export class Player {
     this._attackElapsed = 0;
     this._weaponHitSet = new WeakSet();
 
+    // ── Random attack whoosh
+    soundManager.playAttack();
+
     if (this.onAttack) this.onAttack({ type, attack: atk });
   }
 
@@ -661,6 +666,8 @@ export class Player {
     this.stamina   -= ATTACKS.parry.staminaCost;
     this.isParrying = true;
     this._parryTimer = PARRY_WINDOW;
+
+    soundManager.playParry();
 
     if (this.onParry) this.onParry();
     if (this._animator) this._animator.play('block');
@@ -702,6 +709,7 @@ export class Player {
     if (this.isBlocking || this.isParrying) {
       amount = this.isParrying ? 0 : Math.round(amount * 0.2);
       if (this._animator) this._animator.play('blockHit');
+      soundManager.playParry(); // block clang
     }
 
     this.hp -= amount;
@@ -721,9 +729,10 @@ export class Player {
   _die() {
     this.isAlive  = false;
     this.isDowned = true;
+    soundManager.playDeath();
     // ── Random death animation
     const deathAnim = Math.random() < 0.5 ? 'death' : 'death2';
-    this._animState = deathAnim; // prevent _updateAnimState overriding
+    this._animState = deathAnim;
     if (this._animator) this._animator.play(deathAnim);
     if (this.onDeath) this.onDeath();
   }

@@ -1,11 +1,12 @@
 package com.bossrush.service;
 
-import com.bossrush.model.RunEntry;
-import com.bossrush.repository.RunRepository;
+import java.util.List;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
+import com.bossrush.model.RunEntry;
+import com.bossrush.repository.RunRepository;
 
 @Service
 public class LeaderboardService {
