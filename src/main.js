@@ -56,8 +56,11 @@ function buildStartScreen() {
         <div><span class="key">L</span><span>Parry</span></div>
         <div><span class="key">RMB</span><span>Block</span></div>
       </div>
-      <button id="start-btn">ENTER THE ARENA</button>
-      <button id="anim-btn">ANIMATIONS VIEWER</button>
+      <div id="loading-container">
+        <div id="loading-text">LOADING ASSETS... 0%</div>
+        <div id="loading-bar-bg"><div id="loading-bar-fill"></div></div>
+      </div>
+      <button id="start-btn" style="display: none;">ENTER THE ARENA</button>
       <p class="start-note">Click canvas to lock mouse · ESC to release</p>
     </div>
   `;
@@ -135,37 +138,21 @@ function buildStartScreen() {
     }
     #start-btn:active { transform: scale(0.97); }
 
-    #anim-btn {
-      margin-top: 5px; padding: 12px 40px; background: transparent;
-      color: #ffaa44; border: 1px solid rgba(255,170,68,0.4); border-radius: 4px;
-      font-family: 'Cinzel', serif; font-size: 14px; font-weight: 700; letter-spacing: 4px;
-      text-transform: uppercase; cursor: pointer; transition: all 0.2s;
+    #loading-container {
+      width: 100%; max-width: 400px; margin-top: 10px;
     }
-    #anim-btn:hover { background: rgba(255,170,68,0.1); border-color: #ffaa44; }
-
-    .start-note {
-      color: rgba(255,255,255,0.2); font-size: 11px;
-      letter-spacing: 2px; margin: 0;
+    #loading-text {
+      color: #ffaa44; font-family: 'JetBrains Mono', monospace; font-size: 13px;
+      margin-bottom: 8px; letter-spacing: 2px; text-transform: uppercase;
     }
-
-    /* ── Animation Viewer UI ── */
-    #anim-viewer-ui {
-      display: none; position: fixed; inset: 0; z-index: 600; pointer-events: none;
-      font-family: 'Cinzel', serif;
+    #loading-bar-bg {
+      width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px;
+      overflow: hidden;
     }
-    .viewer-panel {
-      position: absolute; top: 70px; left: 20px;
-      pointer-events: auto; display: flex; flex-direction: column; gap: 15px; 
-      background: rgba(0,0,0,0.85); padding: 20px; border: 1px solid #ffaa44; border-radius: 8px;
+    #loading-bar-fill {
+      width: 0%; height: 100%; background: #ffaa44; transition: width 0.2s ease-out;
+      box-shadow: 0 0 10px #ffaa44;
     }
-    #anim-viewer-ui select, #anim-viewer-ui button {
-      background: rgba(0,0,0,0.6); color: #ffaa44; border: 1px solid #ffaa44;
-      padding: 10px 16px; font-family: 'Rajdhani', sans-serif; font-size: 16px; font-weight: 600;
-      cursor: pointer; outline: none; border-radius: 4px; transition: 0.2s;
-    }
-    #anim-viewer-ui button:hover { background: rgba(255,170,68,0.2); }
-
-
     /* ── You Died overlay ── */
     #game-over {
       position: fixed; inset: 0;
@@ -211,26 +198,31 @@ function buildStartScreen() {
   document.body.appendChild(overlay);
   document.body.appendChild(goScreen);
 
-  const viewerUI = document.createElement('div');
-  viewerUI.id = 'anim-viewer-ui';
-  viewerUI.innerHTML = `
-    <div style="position: absolute; top: 20px; left: 20px; pointer-events: auto;">
-      <button id="viewer-back">← BACK TO MENU</button>
-    </div>
-    <div class="viewer-panel">
-      <select id="viewer-char">
-        <option value="hero">Hero (Paladin)</option>
-        <option value="boss">Boss (Mutant)</option>
-      </select>
-      <select id="viewer-anim"></select>
-    </div>
-  `;
-  document.body.appendChild(viewerUI);
+  document.body.appendChild(overlay);
+  document.body.appendChild(goScreen);
 
   document.getElementById('start-btn').addEventListener('click', startGame);
   document.getElementById('go-restart').addEventListener('click', () => location.reload());
 
-  initViewerEvents();
+  // Hook THREE.js global loading manager
+  THREE.DefaultLoadingManager.onProgress = function (url, itemsLoaded, itemsTotal) {
+    const fill = document.getElementById('loading-bar-fill');
+    const text = document.getElementById('loading-text');
+    if (fill && text) {
+      const pct = Math.floor((itemsLoaded / itemsTotal) * 100);
+      fill.style.width = pct + '%';
+      text.textContent = `LOADING ASSETS... ${pct}%`;
+    }
+  };
+
+  THREE.DefaultLoadingManager.onLoad = function () {
+    const lc = document.getElementById('loading-container');
+    const btn = document.getElementById('start-btn');
+    if (lc && btn) {
+      lc.style.display = 'none';
+      btn.style.display = 'block';
+    }
+  };
 
   // Allow pressing R to restart when game over
   window.addEventListener('keydown', e => {
@@ -254,7 +246,7 @@ function startGame() {
 
   player.requestPointerLock();
 
-  boss = new BossAI(scene, [player], combatWorld);
+  // Boss is already instanced globally so assets preload. Just hook targets.
   player.setCombatTargets([boss]);
   hud.setBossName('The Mutant Overlord');
   hud.startTimer();
@@ -324,135 +316,6 @@ function fmt(ms) {
   return `${m > 0 ? m + 'm ' : ''}${(s % 60).toFixed(1)}s`;
 }
 
-// ─── Animation Viewer Logic ──────────────────────────────────────────────────
-let viewerActive = false;
-let viewerGroup = new THREE.Group();
-viewerGroup.position.set(100, 0, 100);
-scene.add(viewerGroup);
-
-const platGeo = new THREE.CylinderGeometry(3, 3.2, 0.2, 32);
-const platMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9, metalness: 0.1 });
-const platform = new THREE.Mesh(platGeo, platMat);
-platform.position.y = -0.1;
-platform.receiveShadow = true;
-viewerGroup.add(platform);
-
-const HERO_ALL = ["sheath sword 1.glb","sheath sword 2.glb","sword and shield 180 turn (2).glb","sword and shield 180 turn.glb","sword and shield attack (2).glb","sword and shield attack (3).glb","sword and shield attack (4).glb","sword and shield attack.glb","sword and shield block (2).glb","sword and shield block idle.glb","sword and shield block.glb","sword and shield casting (2).glb","sword and shield casting.glb","sword and shield crouch block (2).glb","sword and shield crouch block idle.glb","sword and shield crouch block.glb","sword and shield crouch idle.glb","sword and shield crouch.glb","sword and shield crouching (2).glb","sword and shield crouching (3).glb","sword and shield crouching.glb","sword and shield death (2).glb","sword and shield death.glb","sword and shield idle (2).glb","sword and shield idle (3).glb","sword and shield idle (4).glb","sword and shield idle.glb","sword and shield impact (2).glb","sword and shield impact (3).glb","sword and shield impact.glb","sword and shield jump (2).glb","sword and shield jump.glb","sword and shield kick.glb","sword and shield power up.glb","sword and shield run (2).glb","sword and shield run.glb","sword and shield slash (2).glb","sword and shield slash (3).glb","sword and shield slash (4).glb","sword and shield slash (5).glb","sword and shield strafe (2).glb","sword and shield strafe (3).glb","sword and shield strafe (4).glb","sword and shield strafe.glb","sword and shield turn (2).glb","sword and shield turn.glb","sword and shield walk (2).glb","sword and shield walk.glb"];
-const BOSS_ALL = ["sheath sword 1.glb","sheath sword 2.glb","sword and shield 180 turn (2).glb","sword and shield 180 turn.glb","sword and shield attack (2).glb","sword and shield attack (3).glb","sword and shield attack (4).glb","sword and shield attack.glb","sword and shield block (2).glb","sword and shield block idle.glb","sword and shield block.glb","sword and shield casting (2).glb","sword and shield casting.glb","sword and shield crouch block (2).glb","sword and shield crouch block idle.glb","sword and shield crouch block.glb","sword and shield crouch idle.glb","sword and shield crouch.glb","sword and shield crouching (2).glb","sword and shield crouching (3).glb","sword and shield crouching.glb","sword and shield death (2).glb","sword and shield death.glb","sword and shield idle (2).glb","sword and shield idle (3).glb","sword and shield idle (4).glb","sword and shield idle.glb","sword and shield impact (2).glb","sword and shield impact (3).glb","sword and shield impact.glb","sword and shield jump (2).glb","sword and shield jump.glb","sword and shield kick.glb","sword and shield power up.glb","sword and shield run (2).glb","sword and shield run.glb","sword and shield slash (2).glb","sword and shield slash (3).glb","sword and shield slash (4).glb","sword and shield slash (5).glb","sword and shield slash.glb","sword and shield strafe (2).glb","sword and shield strafe (3).glb","sword and shield strafe (4).glb","sword and shield strafe.glb","sword and shield turn (2).glb","sword and shield turn.glb","sword and shield walk (2).glb","sword and shield walk.glb"];
-
-let currentViewerModel = null;
-let viewerAnimator = null;
-let viewerYaw = Math.PI;
-
-async function loadViewerModel(type) {
-  if (currentViewerModel) {
-    viewerGroup.remove(currentViewerModel);
-    currentViewerModel = null;
-    viewerAnimator = null;
-  }
-  
-  const isHero = type === 'hero';
-  const modelPath = isHero ? HERO_MODEL : BOSS_MODEL;
-  
-  const animsDict = {};
-  const fileList = isHero ? HERO_ALL : BOSS_ALL;
-  const basePath = isHero ? '/assets/hero/animations/' : '/assets/villan/animations/';
-  fileList.forEach(f => {
-    animsDict[f.replace('.glb', '')] = basePath + f;
-  });
-  
-  const selectAnim = document.getElementById('viewer-anim');
-  selectAnim.innerHTML = '';
-  Object.keys(animsDict).forEach(k => {
-    const opt = document.createElement('option');
-    opt.value = k;
-    opt.textContent = k.toUpperCase();
-    selectAnim.appendChild(opt);
-  });
-  
-  const gltf = await loadGLTF(modelPath);
-  const model = gltf.scene;
-  
-  model.traverse(child => {
-    if (!child.isMesh && !child.isSkinnedMesh) return;
-    child.castShadow = true;
-    child.receiveShadow = true;
-    const wasArray = Array.isArray(child.material);
-    const mats = wasArray ? child.material : [child.material];
-    const newMats = mats.map(m => {
-       const std = m.isMeshStandardMaterial ? m : new THREE.MeshStandardMaterial({ map: m.map, color: 0xaaaaaa });
-       std.transparent = false; std.opacity = 1; std.depthWrite = true;
-       if (!isHero) { std.emissive = new THREE.Color(0x440000); std.emissiveIntensity = 0.4; }
-       return std;
-    });
-    child.material = wasArray ? newMats : newMats[0];
-  });
-  
-  model.scale.setScalar(isHero ? 1 : 1.8);
-  const box = new THREE.Box3().setFromObject(model);
-  model.position.y = -box.min.y;
-  
-  viewerGroup.add(model);
-  currentViewerModel = model;
-  
-  viewerAnimator = new CharacterAnimator(model, animsDict);
-  const firstAnim = Object.keys(animsDict)[0];
-  await viewerAnimator.preload([firstAnim]);
-  viewerAnimator.play(firstAnim);
-}
-
-function initViewerEvents() {
-  document.getElementById('viewer-char').addEventListener('change', e => {
-    loadViewerModel(e.target.value);
-  });
-
-  document.getElementById('viewer-anim').addEventListener('change', async (e) => {
-    if (!viewerAnimator) return;
-    const alias = e.target.value;
-    await viewerAnimator.preload([alias]);
-    viewerAnimator.play(alias);
-  });
-
-  document.getElementById('viewer-back').addEventListener('click', () => {
-    viewerActive = false;
-    document.getElementById('anim-viewer-ui').style.display = 'none';
-    const startScreen = document.getElementById('start-screen');
-    startScreen.style.opacity = '1';
-    startScreen.style.pointerEvents = 'auto';
-    camera.position.set(0, 8, 14);
-    camera.lookAt(0, 0, 0);
-    
-    // Show game UI again
-    const ui = document.getElementById('game-ui');
-    if (ui) ui.style.display = 'block';
-  });
-
-  document.getElementById('anim-btn').addEventListener('click', () => {
-    viewerActive = true;
-    const startScreen = document.getElementById('start-screen');
-    startScreen.style.opacity = '0';
-    startScreen.style.pointerEvents = 'none';
-    document.getElementById('anim-viewer-ui').style.display = 'block';
-    
-    // Hide game UI
-    const ui = document.getElementById('game-ui');
-    if (ui) ui.style.display = 'none';
-
-    if (!currentViewerModel) loadViewerModel('hero');
-  });
-
-  let isDragging = false;
-  let prevX = 0;
-  document.addEventListener('mousedown', e => { isDragging = true; prevX = e.clientX; });
-  document.addEventListener('mouseup', () => isDragging = false);
-  document.addEventListener('mousemove', e => {
-    if (viewerActive && isDragging) {
-      viewerYaw -= (e.clientX - prevX) * 0.01;
-      prevX = e.clientX;
-    }
-  });
-}
-
 // ─── Resize ──────────────────────────────────────────────────────────────────
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -470,19 +333,7 @@ function gameLoop() {
   const delta = Math.min((now - lastTime) / 1000, 0.05);
   lastTime    = now;
 
-  if (viewerActive) {
-    const r = 5.5;
-    camera.position.set(
-      viewerGroup.position.x + Math.sin(viewerYaw) * r,
-      viewerGroup.position.y + 1.8,
-      viewerGroup.position.z + Math.cos(viewerYaw) * r
-    );
-    camera.lookAt(viewerGroup.position.x, viewerGroup.position.y + 1.2, viewerGroup.position.z);
-    
-    if (viewerAnimator) viewerAnimator.update(delta);
-    renderer.render(scene, camera);
-    return;
-  }
+
 
   arena.update(delta);
 
@@ -507,5 +358,9 @@ function gameLoop() {
 }
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
+// Boss needs to be instantiated early so its models and animations preload 
+// via THREE.DefaultLoadingManager before the user hits "ENTER THE ARENA"
+boss = new BossAI(scene, [player], combatWorld);
+
 buildStartScreen();
 gameLoop();

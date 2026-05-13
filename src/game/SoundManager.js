@@ -29,7 +29,7 @@ const POOL_SIZE = 3;
 export class SoundManager {
   constructor() {
     this._muted   = false;
-    this._volume  = 0.7;
+    this._volume  = 0.67;
     this._pools   = {};   // key → AudioPool[]
     this._singles = {};   // key → HTMLAudioElement
 
@@ -105,7 +105,7 @@ export class SoundManager {
     if (!pool || pool.length === 0) return;
     const src = pool[Math.floor(Math.random() * pool.length)].src;
     const a = new Audio(src);
-    a.volume = Math.min(1, volume);
+    a.volume = Math.max(0, Math.min(1, volume * this._volume));
     a.play().catch(() => {/* autoplay blocked – silently ignore */});
   }
 
@@ -114,7 +114,7 @@ export class SoundManager {
     if (this._muted) return;
     const a = this._singles[key];
     if (!a) return;
-    a.volume = Math.min(1, volume);
+    a.volume = Math.max(0, Math.min(1, volume * this._volume));
     a.currentTime = 0;
     a.play().catch(() => {});
   }
