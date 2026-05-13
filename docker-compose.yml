@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: bossrush
+      POSTGRES_USER: bossrush
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  leaderboard-api:
+    build: ./leaderboard-api
+    ports:
+      - "8081:8081"
+    depends_on:
+      - db
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/bossrush
+      - SPRING_DATASOURCE_USERNAME=bossrush
+      - SPRING_DATASOURCE_PASSWORD=password
+
+  game-server:
+    build: ./game-server
+    ports:
+      - "3001:3001"
+
+  frontend:
+    build: .
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
