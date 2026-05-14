@@ -304,7 +304,7 @@ export class Player {
   }
 
   _handleAction(code) {
-    if (!this.isAlive || this.isDowned) return;
+    if (!this.isAlive || this.isDowned || this.isHit) return;
     if (code === 'KeyJ') this._tryAttack('light');  // HIGH damage
     if (code === 'KeyK') this._tryAttack('combo');  // MEDIUM damage (fast combo)
     if (code === 'KeyL') this._tryParry();
@@ -395,6 +395,14 @@ export class Player {
         this._parryTimer = 0;
       }
     }
+
+    if (this.hitTimer > 0) {
+      this.hitTimer -= delta;
+      if (this.hitTimer <= 0) {
+        this.isHit = false;
+        this.hasIframes = false;
+      }
+    }
   }
 
   // ─── Movement ──────────────────────────────────────────────────────────────
@@ -421,7 +429,7 @@ export class Player {
     this.moveDir.copy(moveInput);
 
     // Apply movement with inertia and grounded friction (if not in dodge)
-    if (!this.isDodging && !this.isAttacking) {
+    if (!this.isDodging && !this.isAttacking && !this.isHit) {
       let speed = isRunning ? RUN_SPEED : MOVE_SPEED;
       if (this.isBlocking) speed = MOVE_SPEED * 0.5; // Walk slower while blocking
 
@@ -604,7 +612,9 @@ export class Player {
     const k = this.keys;
     let next = 'idle';
 
-    if (this.isDodging) {
+    if (this.isHit) {
+      next = this._lastHitAnim || 'hitLight';
+    } else if (this.isDodging) {
       next = 'dodge';
     } else if (this.isAttacking) {
       next = this.currentAttack?.anim ?? 'attackLight';
@@ -704,12 +714,60 @@ export class Player {
   }
 
   // ─── Damage API ────────────────────────────────────────────────────────────
-  takeDamage(amount, isParried = false) {
-    if (!this.isAlive || this.hasIframes) return;
+  takeDamage(amount, isParried = false, attackerPos = null) {
+    if (!this.isAlive || this.hasIframes || this.isHit) return { hit: false };
+
+    let blocked = false;
+    let parried = false;
+
     if (this.isBlocking || this.isParrying) {
-      amount = this.isParrying ? 0 : Math.round(amount * 0.2);
+      let validAngle = true;
+      if (attackerPos) {
+        const toAttacker = new THREE.Vector3().subVectors(attackerPos, this.group.position);
+        toAttacker.y = 0;
+        if (toAttacker.lengthSq() > 0.001) {
+          toAttacker.normalize();
+          const forward = new THREE.Vector3(Math.sin(this.group.rotation.y), 0, Math.cos(this.group.rotation.y));
+          validAngle = forward.dot(toAttacker) > 0.2; // roughly 150 deg front cone
+        }
+      }
+
+      if (validAngle) {
+        if (this.isParrying) {
+          parried = true;
+        } else {
+          blocked = true;
+        }
+      }
+    }
+
+    if (parried) {
       if (this._animator) this._animator.play('blockHit');
-      soundManager.playParry(); // block clang
+      soundManager.playParry(); 
+      if (this.onParrySuccess) this.onParrySuccess();
+      return { hit: true, parried: true, blocked: false };
+    }
+
+    if (blocked) {
+      const staminaDmg = amount * 0.8;
+      this.stamina -= staminaDmg;
+      if (this.stamina < 0) {
+        this.stamina = 0;
+        this.isBlocking = false;
+        amount = Math.round(amount * 0.5); // take half damage on guard break
+      } else {
+        if (this._animator) this._animator.play('blockHit');
+        soundManager.playParry();
+        
+        if (attackerPos) {
+          const pushDir = new THREE.Vector3().subVectors(this.group.position, attackerPos);
+          pushDir.y = 0;
+          if (pushDir.lengthSq() > 0.001) {
+            this.velocity.addScaledVector(pushDir.normalize(), amount * 0.15);
+          }
+        }
+        return { hit: true, parried: false, blocked: true };
+      }
     }
 
     this.hp -= amount;
@@ -717,13 +775,27 @@ export class Player {
       this.hp = 0;
       this._die();
     } else {
-      // ── Tiered impact reaction based on incoming damage
       let hitAnim = 'hitLight';
-      if      (amount >= 45) hitAnim = 'hitHeavy';
-      else if (amount >= 22) hitAnim = 'hitMedium';
-      if (this._animator) this._animator.play(hitAnim);
+      let hitTime = 0.5;
+      if      (amount >= 45) { hitAnim = 'hitHeavy'; hitTime = 0.9; }
+      else if (amount >= 22) { hitAnim = 'hitMedium'; hitTime = 0.7; }
+      
+      this.isHit = true;
+      this.hitTimer = hitTime;
+      this.hasIframes = true;
+      this.isAttacking = false;
+      this.attackTimer = 0;
+      this.isDodging = false;
+      this._lastHitAnim = hitAnim;
+
+      if (this._animator) {
+        this._animator.play(hitAnim);
+      }
+      this._animState = hitAnim;
+      
       if (this.onHit) this.onHit({ damage: amount });
     }
+    return { hit: true, parried: false, blocked: false };
   }
 
   _die() {

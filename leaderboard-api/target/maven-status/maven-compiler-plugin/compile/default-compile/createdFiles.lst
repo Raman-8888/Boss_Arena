@@ -1,0 +1,5 @@
+com\bossrush\LeaderboardApiApplication.class
+com\bossrush\service\LeaderboardService.class
+com\bossrush\model\RunEntry.class
+com\bossrush\repository\RunRepository.class
+com\bossrush\controller\LeaderboardController.class

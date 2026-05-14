@@ -7,7 +7,8 @@ const BASE = '/assets/Sound_effects/';
 const SOUNDS = {
   start:        [BASE + 'start.mp3'],
   death:        [BASE + 'death.mp3'],          // hero death
-  mutantScream: [BASE + 'mutant-scream.mp3'],  // boss death
+  mutantScream: [BASE + 'mutant-scream.mp3'],  // boss scream
+  mutantLongRange: [BASE + 'mutant_long_range_fast_attack.mp3'], // boss sprint attack
   attack: [
     BASE + 'attack-1.mp3',
     BASE + 'attack-2.mp3',
@@ -68,6 +69,9 @@ export class SoundManager {
   /** Boss death / mutant scream */
   playMutantScream() { this._playSingle('mutantScream', 1.0); }
 
+  /** Boss long range fast attack sound */
+  playMutantLongRange() { this._playSingle('mutantLongRange', 1.0); }
+
   /** Random attack whoosh (called on every hero swing) */
   playAttack() { this._playRandom('attack', 0.65); }
 
@@ -90,7 +94,7 @@ export class SoundManager {
     }
 
     // Single-file sounds
-    for (const key of ['start', 'death', 'mutantScream']) {
+    for (const key of ['start', 'death', 'mutantScream', 'mutantLongRange']) {
       const a = new Audio(SOUNDS[key][0]);
       a.volume = this._volume;
       a.preload = 'auto';

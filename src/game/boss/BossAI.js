@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CharacterAnimator, loadGLTF } from '../AnimationManager.js';
 import { BOSS_WORLD_SCALE, CAPSULE_BOSS, CAPSULE_PLAYER } from '../CombatWorld.js';
+import { soundManager } from '../SoundManager.js';
 
 // ─── States ─────────────────────────────────────────────────────────────────
 const S = {
@@ -138,7 +139,7 @@ export class BossAI {
     this._attackClipDuration = 1.12;
     this._alreadyHitTargets = new WeakSet();
     this._weaponTraceSamples = 16;
-    this._bladeHitThickness = 0.1;
+    this._bladeHitThickness = 0.85; // Increased to ensure close-range hits connect
     this._bestBladeDir = new THREE.Vector3();
     this._bladeCand = new THREE.Vector3();
     this._bladeTipCand = new THREE.Vector3();
@@ -182,6 +183,9 @@ export class BossAI {
     this.onDeath       = null;
     this.onScreenShake = null;
     this.onPowerUp     = null;   // fires when power-up starts
+
+    // Vocal presence
+    this._vocalTimer = 20.0 + Math.random() * 5.0;
 
     // ── Power-up system
     this._powerUpCooldown  = 22 + Math.random() * 14; // first trigger 22–36 s in
@@ -322,6 +326,10 @@ export class BossAI {
     this._updateFootGroundContact(delta);
     this._updateTelegraph();
     this._updateActiveFrameDebug();
+    // ── Vocal timer (trigger animation in aggro state)
+    if (this.isAlive && this.state !== S.DEAD) {
+      if (this._vocalTimer > 0) this._vocalTimer -= delta;
+    }
   }
 
   _checkPhase() {
@@ -405,6 +413,17 @@ export class BossAI {
       if (hasValidAttack) this._pickAndTelegraph();
     }
 
+    // ── Vocal Taunt / Roar trigger ──
+    if (this._vocalTimer <= 0 && this.state === S.AGGRO && !this._isPoweredUp) {
+      this._vocalTimer = 20.0 + Math.random() * 10.0;
+      this._setState(S.POWERUP);
+      const dur = this._animator?.getClipDuration('bossPowerUp') ?? 2.2;
+      this.stateTimer = dur;
+      if (this._animator) this._animator.play('bossPowerUp');
+      if (typeof soundManager !== 'undefined') soundManager.playMutantScream();
+      return;
+    }
+
     // ── Rare power-up trigger (not during phase 1 first 10 s)
     if (this._powerUpCooldown > 0) {
       this._powerUpCooldown -= delta;
@@ -415,6 +434,7 @@ export class BossAI {
         const dur = this._animator?.getClipDuration('bossPowerUp') ?? 2.2;
         this.stateTimer = dur;
         if (this._animator) this._animator.play('bossPowerUp');
+        if (typeof soundManager !== 'undefined') soundManager.playMutantScream();
         this._isPoweredUp = true;
         this._powerUpDuration = 12 + Math.random() * 8;  // 12–20 s aggression boost
         this._powerUpAggrBonus = 0.35;
@@ -489,10 +509,10 @@ export class BossAI {
 
     const recent = this._recentAttackHistory;
     const sameInWindow = recent.filter(id => id === a.id).length;
-    score -= sameInWindow * 24;
+    score -= sameInWindow * 45; // Increased penalty for same attack
 
     if (a.id === this._lastAttackId) {
-      score -= 26 + this._sameAttackCount * 22;
+      score -= 50 + this._sameAttackCount * 30;
     }
 
     if (a.id === 'jumpSlam') {
@@ -509,14 +529,22 @@ export class BossAI {
     } else if (a.id === 'attack2') {
       score += 20;
       score += THREE.MathUtils.clamp((7 - normDist) * 2.8, -8, 24);
+      if ((this._playerBlockCount || 0) > 2) score -= 30; // penalize standard attacks if turtling
     } else if (a.id === 'kick') {
       score *= 0.32;
       if (edge < 0.32 * s + 0.08) score += 44;
       else score -= 85;
       if (normDist > 2.6) score -= 55;
-      if (this._lastAttackId === 'kick') score -= 130;
+      
+      // Counter-turtling logic
+      if ((this._playerBlockCount || 0) >= 2) {
+        score += 150; // Massive boost to kick if player is holding block
+        this._bossAiLog('Turtling detected, boosting kick priority');
+      }
+
+      if (this._lastAttackId === 'kick') score -= 180; // Heavy penalty
       const kickStreak = recent.slice(-4).filter(id => id === 'kick').length;
-      score -= kickStreak * 52;
+      score -= kickStreak * 80;
     }
 
     if (this.phaseNum >= 2 && (a.id === 'jumpSlam' || a.id === 'runStrike')) {
@@ -592,18 +620,9 @@ export class BossAI {
     });
 
     scored.sort((x, y) => y.score - x.score);
-    const temp = 14;
-    const weights = scored.map(e => Math.exp(e.score / temp));
-    const wSum = weights.reduce((a, b) => a + b, 0);
-    let r = Math.random() * wSum;
+    
+    // Strict priority: highest score ALWAYS wins to prevent random spam.
     let chosen = scored[0].atk;
-    for (let i = 0; i < scored.length; i++) {
-      r -= weights[i];
-      if (r <= 0) {
-        chosen = scored[i].atk;
-        break;
-      }
-    }
 
     const wasSame = chosen.id === this._lastAttackId;
     if (wasSame) this._sameAttackCount++;
@@ -618,6 +637,12 @@ export class BossAI {
     this.stateTimer = (chosen.telegraph * this.phase.telegraphMult) / 1000;
     this.attackDamageDealt = false;
     this._setState(S.TELEGRAPH);
+
+    if (['jumpSlam', 'runStrike'].includes(chosen.id)) {
+      if (typeof soundManager !== 'undefined') soundManager.playMutantLongRange();
+    } else if (Math.random() < 0.4) {
+      if (typeof soundManager !== 'undefined') soundManager.playMutantScream();
+    }
 
     this._bossAiLog('▶ committed', { attack: chosen.name, id: chosen.id, dmg: chosen.dmg, edge: +edge.toFixed(2), dist: +dist.toFixed(2) });
     if (this.onAttack) this.onAttack({ attack: chosen, telegraphMs: chosen.telegraph * this.phase.telegraphMult });
@@ -773,6 +798,7 @@ export class BossAI {
     if (this.stateTimer <= 0) {
       this.posture = 0;
       this._setState(S.AGGRO);
+      if (typeof soundManager !== 'undefined') soundManager.playMutantScream();
     }
   }
 
@@ -975,6 +1001,17 @@ export class BossAI {
 
   _buildWeaponSegment(atk) {
     const s = BOSS_WORLD_SCALE;
+
+    if (atk.id === 'kick') {
+      const foot = this._rightFootBone || this._leftFootBone || this._weaponSource || this._model;
+      foot.getWorldPosition(this._weaponBase);
+      const ry = this.group.rotation.y;
+      const forward = new THREE.Vector3(Math.sin(ry), 0.2, Math.cos(ry)).normalize();
+      this._weaponTip.copy(this._weaponBase).addScaledVector(forward, 1.4 * s);
+      this._weaponMid.lerpVectors(this._weaponBase, this._weaponTip, 0.5);
+      return;
+    }
+
     const L = (atk.bladeLength ?? 1.3) * s;
     const target = this._nearestPlayer();
     if (!this._weaponSource) {
@@ -1070,7 +1107,18 @@ export class BossAI {
 
             const damage = Math.round(atk.dmg * (region.damageMult ?? 1));
             if (!target.hasIframes) {
-              target.takeDamage(damage);
+              const res = target.takeDamage(damage, false, this.group.position);
+              if (res?.parried) {
+                this.posture += 50;
+                if (this._animator) this._animator.play('bossHitHeavy');
+                this.takeDamage(0, true); // evaluate stagger
+                this.stateTimer = 0;      // interrupt attack
+              }
+              if (res?.blocked) {
+                this._playerBlockCount = (this._playerBlockCount || 0) + 1;
+              } else if (res && !res.blocked && res.hit) {
+                this._playerBlockCount = 0;
+              }
             }
             this._alreadyHitTargets.add(target);
             this.attackDamageDealt = true;
@@ -1130,7 +1178,18 @@ export class BossAI {
 
         const damage = Math.round(atk.dmg * (region.damageMult ?? 1));
         if (!target.hasIframes) {
-          target.takeDamage(damage);
+          const res = target.takeDamage(damage, false, this.group.position);
+          if (res?.parried) {
+            this.posture += 50;
+            if (this._animator) this._animator.play('bossHitHeavy');
+            this.takeDamage(0, true);
+            this.stateTimer = 0;
+          }
+          if (res?.blocked) {
+            this._playerBlockCount = (this._playerBlockCount || 0) + 1;
+          } else if (res && !res.blocked && res.hit) {
+            this._playerBlockCount = 0;
+          }
         }
         this._alreadyHitTargets.add(target);
         this.attackDamageDealt = true;
@@ -1294,9 +1353,13 @@ export class BossAI {
       this.stateTimer = 2.5;
       this.posture = 0;
       if (this._animator) this._animator.play('bossHitHeavy');
+      if (typeof soundManager !== 'undefined') soundManager.playMutantScream();
       if (this.onStagger) this.onStagger();
     } else if (this.state !== S.ATTACK && this.state !== S.TELEGRAPH) {
       if (this._animator) this._animator.play(hitAnim);
+      if (amount >= 45 && Math.random() < 0.5 && typeof soundManager !== 'undefined') {
+        soundManager.playMutantScream();
+      }
     }
   }
 
