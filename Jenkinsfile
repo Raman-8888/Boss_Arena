@@ -31,18 +31,9 @@ pipeline {
             }
         }
 
-        stage('Docker Push') {
-            steps {
-                bat 'docker push bossrush/frontend:latest'
-                bat 'docker push bossrush/game-server:latest'
-                bat 'docker push bossrush/leaderboard-api:latest'
-            }
-        }
-
         stage('Deploy') {
             steps {
                 bat 'docker-compose down'
-                bat 'docker-compose pull'
                 bat 'docker-compose up -d'
             }
         }
