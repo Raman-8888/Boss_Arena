@@ -1,0 +1,69 @@
+# BossRush Project Report
+
+## 1. Project Overview
+BossRush is a high-fidelity, multiplayer 3D boss fight game featuring a AAA-quality combat system, advanced AI, and a high-end dynamic visual aesthetic. The project consists of a Three.js-based frontend for the gameplay, a Node.js/Socket.io game server for multiplayer synchronization, and a Java Spring Boot backend for the leaderboard API.
+
+## 2. Technology Stack & Tools
+
+### Frontend
+- **Three.js:** Used as the core 3D rendering engine, handling models, animations, lighting, and cameras.
+- **Vite:** A fast build tool and development server used to bundle the frontend code.
+- **Vanilla JavaScript & CSS:** The logic is written in modern JavaScript (ES6+) with custom vanilla CSS for high-performance, dynamic UI styling.
+
+### Backend & Multiplayer
+- **Node.js & Socket.IO:** (Planned/Partially implemented based on spec) To handle real-time multiplayer synchronization, including room management and player/boss state sync.
+- **Java 17 & Spring Boot:** Powers the Leaderboard API (`leaderboard-api` directory). Uses Maven for dependency management and Spring Data JPA for database interactions.
+- **PostgreSQL:** The primary database for persisting run entries and leaderboard data.
+
+### DevOps & CI/CD
+- **Docker & Docker Compose:** Containerizes the frontend, game server, and leaderboard API, orchestrating them alongside the PostgreSQL database.
+- **GitHub Actions:** Provides continuous integration (CI) workflows for code linting (ESLint) and formatting (Java Checkstyle).
+- **Jenkins:** Handles the full CI/CD pipeline, building the Maven and Vite projects, creating Docker images, and deploying the stack.
+- **AWS EC2 & Nginx:** The target production environment, utilizing Nginx as a reverse proxy to route traffic to the appropriate Docker containers.
+
+## 3. Core Systems & Architecture
+
+### 3.1 Combat World (`CombatWorld.js`)
+Manages the physics and collision logic of the arena. It uses a custom cylinder/capsule-based collision resolution system to keep players and the boss inside the arena and handle interactions with environmental pillars. It includes functions to calculate edge distances and weapon reach, ensuring fair and accurate melee combat mechanics.
+
+### 3.2 Player System (`player.js`)
+Handles the player character's state, input, and movement.
+- **State Machine:** Tracks states like Idle, Walking, Running, Attacking, Dodging, Parrying, and Hit Reactions.
+- **Input:** Maps keyboard (WASD, Space, Q, J, K, L) and mouse events to actions.
+- **AAA Camera:** Implements a sophisticated third-person camera (`CameraController.js`) with predictive look-ahead, state-dependent FOV/zoom, spring-based smoothing, and collision detection to prevent clipping through the environment.
+- **Combat Mechanics:** Includes light attacks, heavy attacks, combo attacks, dodging (with i-frames), and directional parrying.
+
+### 3.3 Mutant Boss AI (`BossAI.js`)
+A highly complex, multi-phase utility-based AI.
+- **Phases:** The boss has three phases triggered by health thresholds, each increasing speed, aggression, and telegraph speed. Phase 3 triggers an "Enrage" mode with visual changes.
+- **Utility Scoring:** Instead of random attacks, the AI scores available attacks based on distance, cooldowns, attack history (anti-spam), player behavior (e.g., punishing turtling players), and line-of-sight.
+- **Moveset:** Includes gap-closing jump slams, heavy combos, quick slashes, and a spartan kick for close-quarters disruption.
+
+### 3.4 Animation System (`AnimationManager.js`)
+A custom animation manager that handles loading GLTF animation files and retargeting them onto the characters' skeletons. It supports smooth crossfading, one-shot animations (like attacks and hits), and looping animations (like walking/running).
+
+### 3.5 Arena Environment (`arena.js`)
+Constructs the 3D visual representation of the battleground.
+- **Lighting:** Features a mix of ambient, directional, and point lights (torches, pillar caps, boss pedestal) to create a dark, atmospheric, and cinematic mood.
+- **Visuals:** Includes a detailed stone floor with glowing rune circles, stone walls with crenellations, and floating ember particles for added dynamism.
+
+### 3.6 Heads-Up Display (HUD) (`HUD.js`)
+A custom HTML/CSS overlay that provides real-time game feedback.
+- **Design:** Uses a premium, glassmorphism-inspired aesthetic with modern typography (`Cinzel` and `Rajdhani`), smooth gradients, and glowing effects.
+- **Features:** Boss health and posture bars, player health and stamina tracking, an active timer, a dynamic kill feed for combat events (attacks, parries, staggers), and cinematic screen flashes/overlays for damage and critical windows.
+
+### 3.7 Sound Management (`SoundManager.js`)
+A centralized audio system using HTML5 Audio. It handles background music (arena start), environmental sounds, attack whooshes, impact clangs, parry sounds, and boss vocalizations (screams/roars), utilizing audio pooling to allow overlapping sound effects without clipping.
+
+## 4. Workflows
+
+### GitHub Actions Pipeline (`ci.yml`)
+1. **Linting:** Runs ESLint on the JavaScript source files.
+2. **Java Checkstyle:** Runs Maven Checkstyle on the Leaderboard API.
+3. **Build:** Compiles both the Vite frontend and Maven backend to ensure the codebase is free of compilation errors.
+
+### Local Development
+Developers can run `npm run dev` to start the Vite development server for the frontend. The `docker-compose.yml` file allows spinning up the entire stack (Database, API, Game Server, Frontend) locally for comprehensive testing.
+
+## 5. Summary
+BossRush is an ambitious project that combines advanced 3D rendering techniques, custom physics/collision logic, intelligent AI, and modern web development practices to deliver a high-performance, action-RPG experience directly in the browser.

@@ -22,7 +22,7 @@ jobs:
       run: npm install
 
     - name: Run ESLint
-      run: npx eslint src/ --ext .js
+      run: npx eslint src/
 
   java-checkstyle:
     runs-on: ubuntu-latest

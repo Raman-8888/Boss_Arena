@@ -1,0 +1,596 @@
+
+================================================================================
+  BOSSRUSH — AWS FREE TIER + NGINX DEPLOYMENT GUIDE
+  Full Stack: Vite Frontend | Spring Boot Leaderboard API | Node.js Game Server
+================================================================================
+
+PROJECT OVERVIEW
+----------------
+  Frontend  (Vite/React)   → Port 3000   (served by Nginx as static files)
+  Game-Server (Node/Socket.io) → Port 3001
+  Leaderboard API (Spring Boot) → Port 8081
+  Database (PostgreSQL)    → Port 5432
+
+Everything runs inside Docker containers on a single AWS EC2 t2.micro (Free Tier).
+Nginx acts as the reverse proxy sitting in front of all services.
+
+================================================================================
+  PART 1 — AWS FREE TIER ACCOUNT SETUP
+================================================================================
+
+STEP 1: Create Your AWS Account
+--------------------------------
+  1. Go to https://aws.amazon.com/free/
+  2. Click "Create a Free Account"
+  3. Enter email address and choose an account name (e.g. "bossrush-deploy")
+  4. Enter a valid credit card (you will NOT be charged if you stay within Free Tier)
+  5. Complete phone verification
+  6. Select the "Basic support - Free" plan
+  7. Sign in to the AWS Management Console at https://console.aws.amazon.com/
+
+  FREE TIER LIMITS (12 months):
+    - 750 hours/month EC2 t2.micro (Linux)   ← we use this
+    - 30 GB EBS (disk) storage               ← we use this
+    - 15 GB outbound data transfer per month
+    - 750 hours/month RDS (optional, we use Docker Postgres instead)
+
+STEP 2: Set Your Region
+------------------------
+  1. In the top-right of the AWS Console, click the region dropdown
+  2. Choose the region closest to your users
+     Example: "ap-south-1" for Mumbai (India), "us-east-1" for US East
+  3. IMPORTANT: remember this region — all resources must be in the same one
+
+STEP 3: Create an IAM User (Do NOT use root account)
+------------------------------------------------------
+  1. Search for "IAM" in the AWS Console search bar → open IAM
+  2. Left sidebar → Users → "Create user"
+  3. Username: bossrush-admin
+  4. Select "Provide user access to the AWS Management Console" → Next
+  5. Permissions → "Attach policies directly"
+  6. Search and attach: "AdministratorAccess" → Next → Create user
+  7. Download the .csv with login credentials — SAVE THIS FILE
+  8. Sign out of root and sign in with the new IAM user going forward
+
+================================================================================
+  PART 2 — LAUNCH AN EC2 INSTANCE (t2.micro — FREE TIER)
+================================================================================
+
+STEP 4: Launch the EC2 Instance
+---------------------------------
+  1. In the AWS Console search bar → type "EC2" → click EC2
+  2. Click "Launch Instance" (orange button)
+  3. Name: bossrush-server
+
+  --- Choose AMI (Operating System) ---
+  4. Select "Amazon Linux 2023 AMI" (free tier eligible, shows green label)
+     OR: "Ubuntu Server 24.04 LTS" (also free tier eligible — guide uses Ubuntu)
+     RECOMMENDATION: Ubuntu 24.04 LTS — easier for Nginx/Docker setup
+
+  --- Choose Instance Type ---
+  5. Select "t2.micro" — confirm it says "Free tier eligible"
+
+  --- Create Key Pair (SSH Login) ---
+  6. Click "Create new key pair"
+  7. Key pair name: bossrush-key
+  8. Key pair type: RSA
+  9. Private key file format: .pem (for Linux/Mac) OR .ppk (for PuTTY on Windows)
+     Since you are on Windows: choose .ppk if using PuTTY, or .pem if using Git Bash / WSL
+  10. Click "Create key pair" — the file downloads automatically
+      SAVE THIS FILE. You cannot download it again. Put it in a safe folder.
+      Example: C:\Users\raman\aws-keys\bossrush-key.pem
+
+  --- Network Settings (Security Group) ---
+  11. Click "Edit" next to Network settings
+  12. Security group name: bossrush-sg
+  13. By default SSH (port 22) is added — keep it
+  14. Click "Add security group rule" → add the following rules:
+
+      Type        | Port  | Source      | Description
+      ------------|-------|-------------|-------------------
+      SSH         | 22    | My IP       | SSH access
+      HTTP        | 80    | 0.0.0.0/0   | Nginx web traffic
+      HTTPS       | 443   | 0.0.0.0/0   | Nginx HTTPS (future)
+      Custom TCP  | 3000  | 0.0.0.0/0   | Frontend (optional direct)
+      Custom TCP  | 3001  | 0.0.0.0/0   | Game server WebSocket
+      Custom TCP  | 8081  | 0.0.0.0/0   | Leaderboard API (optional direct)
+
+  --- Configure Storage ---
+  15. Keep default: 8 GB gp3 (free tier allows up to 30 GB — you can increase to 20 GB)
+
+  --- Summary ---
+  16. Click "Launch Instance"
+  17. Click "View Instances" — wait for "Instance State: running" (1-2 minutes)
+
+STEP 5: Allocate an Elastic IP (Static Public IP)
+---------------------------------------------------
+  EC2 instances get a new IP every time they restart. Fix this with Elastic IP:
+  1. Left sidebar → Elastic IPs → "Allocate Elastic IP address"
+  2. Keep defaults → "Allocate"
+  3. Select the new Elastic IP → Actions → "Associate Elastic IP address"
+  4. Instance: select bossrush-server → Associate
+  5. NOTE YOUR IP: example → 13.234.56.78 (your IP will be different)
+  NOTE: One Elastic IP associated to a running instance is FREE. 
+        If you stop the instance and the IP is unassociated, you ARE charged (~$0.005/hr).
+        Always stop AND disassociate/release the IP if taking a long break.
+
+================================================================================
+  PART 3 — CONNECT TO YOUR EC2 INSTANCE (SSH)
+================================================================================
+
+STEP 6: SSH Into the Server (Windows)
+---------------------------------------
+  OPTION A — Using Git Bash or WSL (recommended):
+  ------------------------------------------------
+  1. Open Git Bash
+  2. Fix key permissions:
+       chmod 400 /c/Users/raman/aws-keys/bossrush-key.pem
+  3. Connect:
+       ssh -i /c/Users/raman/aws-keys/bossrush-key.pem ubuntu@13.234.56.78
+     (replace the IP with your Elastic IP)
+  4. Type "yes" when asked about fingerprint
+
+  OPTION B — Using PuTTY:
+  -----------------------
+  1. Download PuTTY from https://www.putty.org/
+  2. Open PuTTYgen → Load your .pem file → Save private key as bossrush-key.ppk
+  3. Open PuTTY:
+       Host Name: ubuntu@13.234.56.78
+       Port: 22
+  4. Connection → SSH → Auth → Credentials:
+       Browse to your bossrush-key.ppk file
+  5. Click Open → Yes → you're connected
+
+  OPTION C — AWS Console Browser SSH:
+  ------------------------------------
+  1. Go to EC2 → Instances → select bossrush-server
+  2. Click "Connect" button → "EC2 Instance Connect" tab → Connect
+  (No key file needed — works directly in browser)
+
+================================================================================
+  PART 4 — SERVER SETUP (Install Docker + Docker Compose + Nginx)
+================================================================================
+
+STEP 7: Update the Server
+---------------------------
+  Run these commands after SSH-ing in:
+
+    sudo apt-get update && sudo apt-get upgrade -y
+
+STEP 8: Install Docker
+-----------------------
+    # Install prerequisites
+    sudo apt-get install -y ca-certificates curl gnupg lsb-release
+
+    # Add Docker's official GPG key
+    sudo mkdir -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+      sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+    # Set up the Docker repository
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+      https://download.docker.com/linux/ubuntu \
+      $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    # Install Docker Engine
+    sudo apt-get update
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+    # Add ubuntu user to docker group (no sudo needed for docker commands)
+    sudo usermod -aG docker ubuntu
+
+    # Apply group change (or logout and login again)
+    newgrp docker
+
+    # Verify Docker works
+    docker --version
+    docker compose version
+
+STEP 9: Install Nginx
+----------------------
+    sudo apt-get install -y nginx
+
+    # Start and enable Nginx (auto-starts on reboot)
+    sudo systemctl start nginx
+    sudo systemctl enable nginx
+
+    # Verify Nginx is running
+    sudo systemctl status nginx
+
+    # Test: open your browser → http://13.234.56.78
+    # You should see the Nginx welcome page
+
+STEP 10: Install Git
+---------------------
+    sudo apt-get install -y git
+
+    # Verify
+    git --version
+
+================================================================================
+  PART 5 — DEPLOY THE BOSSRUSH PROJECT
+================================================================================
+
+STEP 11: Clone the Repository
+-------------------------------
+    # Go to a good directory
+    cd /home/ubuntu
+
+    # Clone your repo (replace with your actual GitHub URL)
+    git clone https://github.com/Raman-8888/Boss_Arena.git bossrush
+
+    # Enter the project
+    cd bossrush
+
+    # Check you can see the files
+    ls -la
+
+STEP 12: Set Up Environment Variables
+---------------------------------------
+  The docker-compose.yml has hardcoded credentials. For production, create a .env file:
+
+    nano /home/ubuntu/bossrush/.env
+
+  Paste this content (edit values as needed):
+  ---------------------------------------------------------
+    POSTGRES_DB=bossrush
+    POSTGRES_USER=bossrush
+    POSTGRES_PASSWORD=YOUR_STRONG_PASSWORD_HERE
+    SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/bossrush
+    SPRING_DATASOURCE_USERNAME=bossrush
+    SPRING_DATASOURCE_PASSWORD=YOUR_STRONG_PASSWORD_HERE
+  ---------------------------------------------------------
+  Save: Ctrl+O → Enter → Ctrl+X
+
+  IMPORTANT: Never commit your .env file to GitHub!
+  Make sure .env is in your .gitignore (it already is in the project).
+
+STEP 13: Build and Start All Docker Containers
+------------------------------------------------
+    cd /home/ubuntu/bossrush
+
+    # Build all images and start containers in the background (-d = detached)
+    docker compose up --build -d
+
+    # This will take 3-10 minutes on first run (downloads base images, builds)
+    # Watch the progress:
+    docker compose logs -f
+
+    # Press Ctrl+C to stop watching logs (containers keep running)
+
+    # Check all containers are up:
+    docker compose ps
+
+    # Expected output (all should show "Up"):
+    #   NAME                 STATUS
+    #   bossrush-db-1        Up
+    #   bossrush-frontend-1  Up
+    #   bossrush-leaderboard-api-1  Up
+    #   bossrush-game-server-1      Up
+
+    # Test each service directly:
+    curl http://localhost:3000    # Frontend
+    curl http://localhost:8081    # Leaderboard API
+    curl http://localhost:3001    # Game Server
+
+================================================================================
+  PART 6 — CONFIGURE NGINX AS REVERSE PROXY
+================================================================================
+
+STEP 14: Create Nginx Config for BossRush
+-------------------------------------------
+    # Remove the default Nginx site
+    sudo rm /etc/nginx/sites-enabled/default
+
+    # Create your BossRush Nginx config
+    sudo nano /etc/nginx/sites-available/bossrush
+
+  Paste the following config (replace 13.234.56.78 with your Elastic IP or domain):
+  ==================================================================================
+
+    server {
+        listen 80;
+        server_name 13.234.56.78;   # Replace with your IP or domain name
+
+        # ----------------------------------------------------------------
+        # FRONTEND — Vite/React static game (proxied to port 3000)
+        # ----------------------------------------------------------------
+        location / {
+            proxy_pass http://localhost:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_cache_bypass $http_upgrade;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+
+        # ----------------------------------------------------------------
+        # LEADERBOARD API — Spring Boot REST API (port 8081)
+        # ----------------------------------------------------------------
+        location /api/ {
+            proxy_pass http://localhost:8081/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        # ----------------------------------------------------------------
+        # GAME SERVER — Node.js + Socket.io (port 3001)
+        # WebSocket upgrade is critical for Socket.io to work
+        # ----------------------------------------------------------------
+        location /game/ {
+            proxy_pass http://localhost:3001/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_read_timeout 86400s;
+            proxy_send_timeout 86400s;
+        }
+
+        # ----------------------------------------------------------------
+        # Socket.io specific path (if your game-server uses /socket.io/)
+        # ----------------------------------------------------------------
+        location /socket.io/ {
+            proxy_pass http://localhost:3001/socket.io/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_read_timeout 86400s;
+            proxy_send_timeout 86400s;
+        }
+
+        # Increase max upload size for game assets
+        client_max_body_size 50M;
+    }
+
+  ==================================================================================
+  Save: Ctrl+O → Enter → Ctrl+X
+
+STEP 15: Enable the Config and Reload Nginx
+--------------------------------------------
+    # Create symlink to enable the site
+    sudo ln -s /etc/nginx/sites-available/bossrush /etc/nginx/sites-enabled/
+
+    # Test the config for syntax errors
+    sudo nginx -t
+
+    # Expected output:
+    #   nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+    #   nginx: configuration file /etc/nginx/nginx.conf test is successful
+
+    # Reload Nginx with the new config (zero downtime)
+    sudo systemctl reload nginx
+
+STEP 16: Test the Deployment
+------------------------------
+  Open your browser and test these URLs (replace with your Elastic IP):
+
+    http://13.234.56.78/          → BossRush game frontend
+    http://13.234.56.78/api/      → Leaderboard API (should return JSON or health check)
+    http://13.234.56.78/game/     → Game server
+    http://13.234.56.78/socket.io/ → Socket.io handshake
+
+================================================================================
+  PART 7 — FREE HTTPS WITH LET'S ENCRYPT (OPTIONAL BUT RECOMMENDED)
+================================================================================
+
+  NOTE: You need a real domain name pointed at your Elastic IP for HTTPS.
+        Example: Get a free domain from https://www.freenom.com or buy from Namecheap.
+        Point the domain's A record to your Elastic IP (13.234.56.78).
+
+STEP 17: Install Certbot and Get SSL Certificate
+-------------------------------------------------
+    # Install Certbot
+    sudo apt-get install -y certbot python3-certbot-nginx
+
+    # Get a free SSL certificate (replace with your actual domain)
+    sudo certbot --nginx -d yourdomain.com -d www.yourdomain.com
+
+    # Follow the prompts:
+    #   Enter email → agree to terms → choose redirect option (2 = redirect HTTP to HTTPS)
+
+    # Certbot automatically edits your Nginx config to add HTTPS
+    # Certificates auto-renew every 90 days via a cron job
+
+    # Test auto-renewal
+    sudo certbot renew --dry-run
+
+================================================================================
+  PART 8 — KEEPING IT RUNNING & MONITORING
+================================================================================
+
+STEP 18: Configure Docker to Auto-Start on Reboot
+---------------------------------------------------
+  Add restart policies to docker-compose.yml (edit locally, push, then pull on server):
+  Under each service add:
+      restart: unless-stopped
+
+  Example in docker-compose.yml:
+      services:
+        db:
+          image: postgres:15
+          restart: unless-stopped
+          ...
+        leaderboard-api:
+          build: ./leaderboard-api
+          restart: unless-stopped
+          ...
+        game-server:
+          build: ./game-server
+          restart: unless-stopped
+          ...
+        frontend:
+          build: .
+          restart: unless-stopped
+          ...
+
+  After editing docker-compose.yml:
+    docker compose up -d
+
+STEP 19: Useful Monitoring Commands
+-------------------------------------
+    # View running containers
+    docker compose ps
+
+    # View logs for a specific service (live tail)
+    docker compose logs -f leaderboard-api
+    docker compose logs -f game-server
+    docker compose logs -f frontend
+
+    # View last 100 lines of logs
+    docker compose logs --tail=100
+
+    # Check resource usage (CPU, memory)
+    docker stats
+
+    # Check disk usage (t2.micro has 8GB default)
+    df -h
+
+    # Check Nginx logs
+    sudo tail -f /var/log/nginx/access.log
+    sudo tail -f /var/log/nginx/error.log
+
+STEP 20: Updating the Application (Redeploy)
+---------------------------------------------
+  When you push new code to GitHub and want to redeploy:
+
+    cd /home/ubuntu/bossrush
+
+    # Pull latest code
+    git pull origin main
+
+    # Rebuild and restart only changed containers
+    docker compose up --build -d
+
+    # Or force rebuild everything
+    docker compose down && docker compose up --build -d
+
+================================================================================
+  PART 9 — GITHUB ACTIONS CI/CD AUTO-DEPLOY (ADVANCED)
+================================================================================
+
+STEP 21: Add a Deploy Script on the Server
+--------------------------------------------
+    nano /home/ubuntu/deploy.sh
+
+  Paste:
+  -----------------------------------------------
+    #!/bin/bash
+    echo "=== BossRush Deploy Starting ==="
+    cd /home/ubuntu/bossrush
+    git pull origin main
+    docker compose up --build -d
+    echo "=== Deploy Complete ==="
+  -----------------------------------------------
+    chmod +x /home/ubuntu/deploy.sh
+
+STEP 22: Add GitHub Secrets for SSH
+-------------------------------------
+  1. Go to your GitHub repo → Settings → Secrets and variables → Actions
+  2. Add these secrets:
+       AWS_HOST       → 13.234.56.78 (your Elastic IP)
+       AWS_USERNAME   → ubuntu
+       AWS_KEY        → (paste entire contents of your bossrush-key.pem file)
+
+STEP 23: GitHub Actions Deploy Job
+------------------------------------
+  In .github/workflows/ci.yml, add a deploy job after your build job:
+
+  -----------------------------------------------
+    deploy:
+      needs: build          # runs after your build job succeeds
+      runs-on: ubuntu-latest
+      if: github.ref == 'refs/heads/main'
+      steps:
+        - name: Deploy to AWS EC2
+          uses: appleboy/ssh-action@v1.0.3
+          with:
+            host: ${{ secrets.AWS_HOST }}
+            username: ${{ secrets.AWS_USERNAME }}
+            key: ${{ secrets.AWS_KEY }}
+            script: |
+              /home/ubuntu/deploy.sh
+  -----------------------------------------------
+
+  Now every push to main will:
+  1. Run tests (your existing CI jobs)
+  2. SSH into EC2 and redeploy automatically
+
+================================================================================
+  PART 10 — COST & FREE TIER MANAGEMENT
+================================================================================
+
+STAYING WITHIN FREE TIER:
+--------------------------
+  - t2.micro: 750 hours/month FREE = essentially always-on for one instance
+  - EBS storage: Keep under 30 GB total
+  - Data transfer OUT: Keep under 15 GB/month
+  - RDS: NOT used here (we use Docker Postgres) — saves free tier hours
+  - Elastic IP: FREE while associated to a running instance
+
+  SET A BILLING ALERT (very important!):
+  1. Go to AWS Console → Billing & Cost Management (search "Billing")
+  2. Left sidebar → Budgets → Create budget
+  3. Choose "Zero spend budget" — alerts you at the first dollar spent
+  4. Enter your email → Create budget
+  5. This is your safety net for unexpected charges
+
+STOP INSTANCE WHEN NOT USING:
+-------------------------------
+  EC2 → Instances → select instance → Instance State → Stop
+  (You keep your data. Elastic IP stays associated. No hourly charge while stopped.)
+
+================================================================================
+  QUICK REFERENCE — CHEAT SHEET
+================================================================================
+
+  SSH into server:
+    ssh -i ~/aws-keys/bossrush-key.pem ubuntu@<YOUR_ELASTIC_IP>
+
+  Start all services:
+    cd /home/ubuntu/bossrush && docker compose up -d
+
+  Stop all services:
+    cd /home/ubuntu/bossrush && docker compose down
+
+  Restart a single service:
+    docker compose restart leaderboard-api
+
+  View logs:
+    docker compose logs -f <service-name>
+
+  Redeploy after code changes:
+    cd /home/ubuntu/bossrush && git pull && docker compose up --build -d
+
+  Nginx config path:
+    /etc/nginx/sites-available/bossrush
+
+  Test Nginx config:
+    sudo nginx -t
+
+  Reload Nginx:
+    sudo systemctl reload nginx
+
+  Check disk space:
+    df -h
+
+  PORT MAPPING SUMMARY:
+    80  (public, Nginx) → routes to:
+        /         → localhost:3000  (Vite frontend)
+        /api/     → localhost:8081  (Spring Boot leaderboard API)
+        /game/    → localhost:3001  (Node.js game server)
+        /socket.io/ → localhost:3001 (Socket.io WebSocket)
+
+================================================================================
+  END OF GUIDE
+  BossRush — AWS Free Tier + Nginx Deployment Guide
+================================================================================
