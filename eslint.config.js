@@ -29,6 +29,8 @@ export default [
         sessionStorage: "readonly",
         AudioContext: "readonly",
         WebGLRenderingContext: "readonly",
+        location: "readonly",
+        Audio: "readonly",
       },
     },
     rules: {
